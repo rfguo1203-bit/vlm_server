@@ -12,6 +12,13 @@ async def lifespan(_: FastAPI):
     settings = get_settings()
     engine_manager = initialize_engine_manager(settings)
     engine_manager.load()
+    print(
+        "[app] model is ready, "
+        f"backend={settings.inference_backend}, "
+        f"model={settings.model_name}, "
+        f"serving_on={settings.server_url}",
+        flush=True,
+    )
     yield
 
 

@@ -2,13 +2,12 @@
 
 set -euo pipefail
 
-CUDA_VISIBLE_DEVICES=3
-
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ROOT_DIR}/.env"
 
 DEFAULT_APP_NAME="vlm-server"
 DEFAULT_APP_ENV="prod"
+DEFAULT_GPU_ID="0"
 DEFAULT_HOST="127.0.0.1"
 DEFAULT_PORT="8000"
 DEFAULT_LOG_LEVEL="info"
@@ -35,6 +34,8 @@ fi
 export PYTHONPATH="${ROOT_DIR}:${PYTHONPATH:-}"
 export APP_NAME="${APP_NAME:-${DEFAULT_APP_NAME}}"
 export APP_ENV="${APP_ENV:-${DEFAULT_APP_ENV}}"
+export GPU_ID="${GPU_ID:-${DEFAULT_GPU_ID}}"
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-${GPU_ID}}"
 export HOST="${HOST:-${DEFAULT_HOST}}"
 export PORT="${PORT:-${DEFAULT_PORT}}"
 export LOG_LEVEL="${LOG_LEVEL:-${DEFAULT_LOG_LEVEL}}"
@@ -52,6 +53,7 @@ export ALLOW_FILE_PATH_INPUT="${ALLOW_FILE_PATH_INPUT:-${DEFAULT_ALLOW_FILE_PATH
 export ALLOW_BASE64_INPUT="${ALLOW_BASE64_INPUT:-${DEFAULT_ALLOW_BASE64_INPUT}}"
 
 echo "[run_server] root_dir=${ROOT_DIR}"
+echo "[run_server] cuda_visible_devices=${CUDA_VISIBLE_DEVICES}"
 echo "[run_server] host=${HOST} port=${PORT}"
 echo "[run_server] model=${MODEL_NAME}"
 echo "[run_server] model_path=${MODEL_PATH}"
