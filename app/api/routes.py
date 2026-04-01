@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi import status as http_status
 
 from app.core.config import get_settings
@@ -34,11 +34,17 @@ async def readyz() -> ReadinessResponse:
     status_code=http_status.HTTP_200_OK,
 )
 async def chat_completions(
+    http_request: Request,
     request: ChatCompletionRequest,
 ) -> ChatCompletionResponse:
     settings = get_settings()
     engine_manager = get_engine_manager()
-    return create_chat_completion(request, engine_manager, settings)
+    return await create_chat_completion(
+        request,
+        engine_manager,
+        settings,
+        http_request.state.request_id,
+    )
 
 
 @router.get("/internal/engine-status")

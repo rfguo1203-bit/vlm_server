@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from app.core.config import Settings
 from app.engine.base import EngineStatus
 from app.engine.vllm_engine import VLLMEngine
@@ -9,6 +11,7 @@ class EngineManager:
     def __init__(self, settings: Settings):
         self._settings = settings
         self._engine = None
+        self._request_semaphore: asyncio.Semaphore | None = None
         self._status = EngineStatus(
             backend=settings.inference_backend,
             model_name=settings.model_name,
@@ -23,6 +26,14 @@ class EngineManager:
     @property
     def engine(self):
         return self._engine
+
+    @property
+    def request_semaphore(self) -> asyncio.Semaphore:
+        if self._request_semaphore is None:
+            self._request_semaphore = asyncio.Semaphore(
+                max(1, self._settings.inference_concurrency)
+            )
+        return self._request_semaphore
 
     def load(self) -> None:
         if self._settings.skip_model_load:

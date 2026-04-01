@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     max_input_images: int = 4
     max_image_bytes: int = 20 * 1024 * 1024
     default_max_tokens: int = 512
+    max_output_tokens_limit: int = 1024
     default_temperature: float = 0.1
     inference_concurrency: int = 1
 
