@@ -4,10 +4,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-DEFAULT_SERVER_URL="http://127.0.0.1:8000"
+DEFAULT_SERVER_URL="http://127.0.0.1:8972"
 DEFAULT_MODEL_NAME="Qwen3.5-27B"
 DEFAULT_REQUEST_MODE="path"
-DEFAULT_IMAGE_PATH="/tmp/example.jpg"
+DEFAULT_IMAGE_PATH="/home/user/g00806422/embodiment/vlm_server/tmp/1.png"
 DEFAULT_PROMPT="请描述这张图片中的主要内容。"
 DEFAULT_MAX_TOKENS="256"
 DEFAULT_TEMPERATURE="0.1"

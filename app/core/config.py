@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     app_name: str = "vlm-server"
     app_env: str = "dev"
     host: str = "127.0.0.1"
-    port: int = 8000
+    port: int = 8972
     log_level: str = "info"
 
     model_name: str = "Qwen3.5-27B"
