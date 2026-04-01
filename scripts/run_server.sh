@@ -7,7 +7,6 @@ CUDA_VISIBLE_DEVICES=3
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ROOT_DIR}/.env"
 
-DEFAULT_CONDA_ENV_NAME="vllm"
 DEFAULT_APP_NAME="vlm-server"
 DEFAULT_APP_ENV="prod"
 DEFAULT_HOST="127.0.0.1"
@@ -52,18 +51,11 @@ export REQUEST_TIMEOUT_SECONDS="${REQUEST_TIMEOUT_SECONDS:-${DEFAULT_REQUEST_TIM
 export ALLOW_FILE_PATH_INPUT="${ALLOW_FILE_PATH_INPUT:-${DEFAULT_ALLOW_FILE_PATH_INPUT}}"
 export ALLOW_BASE64_INPUT="${ALLOW_BASE64_INPUT:-${DEFAULT_ALLOW_BASE64_INPUT}}"
 
-CONDA_ENV_NAME="${CONDA_ENV_NAME:-${DEFAULT_CONDA_ENV_NAME}}"
-
 echo "[run_server] root_dir=${ROOT_DIR}"
 echo "[run_server] host=${HOST} port=${PORT}"
 echo "[run_server] model=${MODEL_NAME}"
 echo "[run_server] model_path=${MODEL_PATH}"
 echo "[run_server] backend=${INFERENCE_BACKEND}"
 echo "[run_server] skip_model_load=${SKIP_MODEL_LOAD}"
-
-if command -v conda >/dev/null 2>&1; then
-  exec conda run --no-capture-output -n "${CONDA_ENV_NAME}" \
-    python -m uvicorn app.main:app --host "${HOST}" --port "${PORT}"
-fi
 
 exec python -m uvicorn app.main:app --host "${HOST}" --port "${PORT}"
