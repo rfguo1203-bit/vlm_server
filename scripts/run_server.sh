@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+CUDA_VISIBLE_DEVICES=0
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ROOT_DIR}/.env"
 
