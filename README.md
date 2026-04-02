@@ -16,7 +16,7 @@ cp .env.example .env
 - `MODEL_PATH=/home/user/g00806422/data/weight/Qwen3.5-27B`
 - `INFERENCE_CONCURRENCY=1`
 - `REQUEST_TIMEOUT_SECONDS=120`
-- `MAX_OUTPUT_TOKENS_LIMIT=1024`
+- `MAX_OUTPUT_TOKENS_LIMIT=10240`
 
 如果只想做结构调试、不加载真实模型：
 
