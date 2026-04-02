@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 *.pyo
+.DS_Store
 
 .Python
 .pytest_cache/
