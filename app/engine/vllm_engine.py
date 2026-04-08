@@ -43,11 +43,13 @@ class VLLMEngine:
                 model=str(model_path),
                 trust_remote_code=True,
                 dtype="bfloat16",
+                tensor_parallel_size=self._settings.tensor_parallel_size,
             )
         except Exception as exc:
             raise RuntimeError(
                 f"Failed to initialize vLLM for model `{self._settings.model_name}` "
-                f"from `{model_path}`: {exc}"
+                f"from `{model_path}` with tensor_parallel_size="
+                f"{self._settings.tensor_parallel_size}: {exc}"
             ) from exc
 
         self._status.loaded = True

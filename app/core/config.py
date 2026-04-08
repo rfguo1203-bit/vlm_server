@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     model_name: str = "Qwen3.5-27B"
     model_path: str = "/home/user/g00806422/data/weight/Qwen3.5-27B"
     inference_backend: str = "vllm"
+    tensor_parallel_size: int = 2
     skip_model_load: bool = False
 
     max_input_images: int = 4

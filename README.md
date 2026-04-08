@@ -1,6 +1,6 @@
 # vlm_server
 
-单机单卡 VLM 推理服务，默认基于 `FastAPI + vLLM`，提供本机 HTTP 接口，也可以在 Python 代码里直接调用内部函数完成对话。
+单机多卡 VLM 推理服务，默认基于 `FastAPI + vLLM`，当前默认按两卡启动，提供本机 HTTP 接口，也可以在 Python 代码里直接调用内部函数完成对话。
 
 ## 准备
 
@@ -14,6 +14,7 @@ cp .env.example .env
 - `PORT=8972`
 - `MODEL_NAME=Qwen3.5-27B`
 - `MODEL_PATH=/home/user/g00806422/data/weight/Qwen3.5-27B`
+- `TENSOR_PARALLEL_SIZE=2`
 - `INFERENCE_CONCURRENCY=1`
 - `REQUEST_TIMEOUT_SECONDS=120`
 - `MAX_OUTPUT_TOKENS_LIMIT=10240`
@@ -31,10 +32,22 @@ conda activate vllm
 bash scripts/run_server.sh
 ```
 
-指定单卡 GPU：
+默认等价于两卡启动，例如：
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 bash scripts/run_server.sh
+CUDA_VISIBLE_DEVICES=4,5 TENSOR_PARALLEL_SIZE=2 bash scripts/run_server.sh
+```
+
+指定别的两张卡：
+
+```bash
+CUDA_VISIBLE_DEVICES=6,7 TENSOR_PARALLEL_SIZE=2 bash scripts/run_server.sh
+```
+
+如果你要临时切回单卡：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 TENSOR_PARALLEL_SIZE=1 bash scripts/run_server.sh
 ```
 
 ## HTTP 调用
