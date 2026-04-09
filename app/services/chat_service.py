@@ -209,18 +209,23 @@ def _run_inference(
         "sampling_params": sampling_params,
     }
     if request.session_id is not None:
-        if not getattr(runtime, "supports_cache_salt", lambda: False)():
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=(
-                    "The current vLLM runtime does not support request-level cache "
-                    "isolation (`cache_salt`). Please upgrade or pin vLLM."
-                ),
-            )
         chat_kwargs["cache_salt"] = _build_cache_salt(request.session_id, settings)
 
     try:
         results = runtime.engine.chat(**chat_kwargs)
+    except TypeError as exc:
+        if request.session_id is not None and "cache_salt" in str(exc):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    "The current vLLM runtime rejected request-level cache isolation "
+                    "(`cache_salt`). Please verify the installed vLLM package/version."
+                ),
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Inference failed: {exc}",
+        ) from exc
     except Exception as exc:
         if _is_oom_error(exc):
             raise HTTPException(

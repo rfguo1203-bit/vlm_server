@@ -47,10 +47,13 @@ class FakeSamplingParams:
 
 
 class FakeChatBackend:
-    def __init__(self) -> None:
+    def __init__(self, supports_cache_salt: bool = True) -> None:
         self.calls: list[dict] = []
+        self.supports_cache_salt = supports_cache_salt
 
     def chat(self, messages, sampling_params, cache_salt=None):
+        if cache_salt is not None and not self.supports_cache_salt:
+            raise TypeError("chat() got an unexpected keyword argument 'cache_salt'")
         self.calls.append(
             {
                 "messages": messages,
@@ -67,11 +70,7 @@ class FakeChatBackend:
 
 class FakeRuntime:
     def __init__(self, supports_cache_salt: bool = True) -> None:
-        self.engine = FakeChatBackend()
-        self._supports_cache_salt = supports_cache_salt
-
-    def supports_cache_salt(self) -> bool:
-        return self._supports_cache_salt
+        self.engine = FakeChatBackend(supports_cache_salt=supports_cache_salt)
 
 
 class FakeEngineManager:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 
 from app.core.config import Settings
@@ -26,15 +25,6 @@ class VLLMEngine:
     def engine(self):
         return self._engine
 
-    def supports_cache_salt(self) -> bool:
-        if self._engine is None:
-            return False
-        try:
-            signature = inspect.signature(self._engine.chat)
-        except (TypeError, ValueError):
-            return False
-        return "cache_salt" in signature.parameters
-
     def load(self) -> None:
         model_path = Path(self._settings.model_path)
         if not model_path.exists():
@@ -48,18 +38,6 @@ class VLLMEngine:
                 "Please activate the server conda env `vllm` before starting the service."
             ) from exc
 
-        if self._settings.enable_prefix_caching:
-            try:
-                llm_signature = inspect.signature(LLM.__init__)
-            except (TypeError, ValueError):
-                llm_signature = None
-
-            if llm_signature is None or "enable_prefix_caching" not in llm_signature.parameters:
-                raise RuntimeError(
-                    "The current vLLM version does not support `enable_prefix_caching`. "
-                    "Please upgrade or pin vLLM to a version that supports APC."
-                )
-
         try:
             llm_kwargs = dict(
                 model=str(model_path),
@@ -70,6 +48,17 @@ class VLLMEngine:
             if self._settings.enable_prefix_caching:
                 llm_kwargs["enable_prefix_caching"] = True
             self._engine = LLM(**llm_kwargs)
+        except TypeError as exc:
+            if self._settings.enable_prefix_caching and "enable_prefix_caching" in str(exc):
+                raise RuntimeError(
+                    "The current vLLM runtime rejected `enable_prefix_caching`. "
+                    "Please verify the installed vLLM package really matches the expected version."
+                ) from exc
+            raise RuntimeError(
+                f"Failed to initialize vLLM for model `{self._settings.model_name}` "
+                f"from `{model_path}` with tensor_parallel_size="
+                f"{self._settings.tensor_parallel_size}: {exc}"
+            ) from exc
         except Exception as exc:
             raise RuntimeError(
                 f"Failed to initialize vLLM for model `{self._settings.model_name}` "
