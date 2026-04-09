@@ -15,6 +15,8 @@ cp .env.example .env
 - `MODEL_NAME=Qwen3.5-27B`
 - `MODEL_PATH=/home/user/g00806422/data/weight/Qwen3.5-27B`
 - `TENSOR_PARALLEL_SIZE=2`
+- `ENABLE_PREFIX_CACHING=true`
+- `SESSION_CACHE_SECRET=please-change-this-in-prod`
 - `INFERENCE_CONCURRENCY=1`
 - `REQUEST_TIMEOUT_SECONDS=120`
 - `MAX_OUTPUT_TOKENS_LIMIT=10240`
@@ -78,6 +80,7 @@ curl -X POST http://127.0.0.1:8972/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "Qwen3.5-27B",
+    "session_id": "demo-session-001",
     "messages": [
       {
         "role": "user",
@@ -99,6 +102,55 @@ curl -X POST http://127.0.0.1:8972/v1/chat/completions \
     "temperature": 0.1
   }'
 ```
+
+多轮对话时，客户端每轮都带完整历史，并保持同一个 `session_id`。服务端不会保存历史，只会把 `session_id` 映射成请求级缓存隔离键，配合 vLLM 的 prefix caching 复用相同前缀的 KV cache。
+
+最小约定：
+
+- 同一会话：`session_id` 不变
+- 新开会话：换一个新的 `session_id`
+- 每轮请求：`messages = 历史消息 + 本轮新增消息`
+- 收到回复后：把 assistant 回复追加回本地 `messages`
+
+一个简化的 `urllib.request` 多轮示例：
+
+```python
+import json
+import urllib.request
+import uuid
+
+server_url = "http://127.0.0.1:8972/v1/chat/completions"
+session_id = str(uuid.uuid4())
+messages = []
+
+for user_text in ["你好，请先记住我叫小王。", "我刚才叫什么名字？"]:
+    messages.append({"role": "user", "content": user_text})
+
+    body = {
+        "model": "Qwen3.5-27B",
+        "session_id": session_id,
+        "messages": messages,
+        "max_tokens": 256,
+        "temperature": 0.1,
+    }
+    req = urllib.request.Request(
+        server_url,
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as resp:
+        result = json.loads(resp.read().decode("utf-8"))
+    assistant_text = result["choices"][0]["message"]["content"]
+    print(assistant_text)
+    messages.append({"role": "assistant", "content": assistant_text})
+```
+
+说明：
+
+- 不传 `session_id` 时，接口仍可正常使用，但不会提供“同会话隔离的 KV cache 复用保证”
+- 传了 `session_id` 时，要求当前 vLLM 版本支持 APC 和 `cache_salt`
+- 图片多轮场景也可以带 `session_id`，但图片前缀是否稳定命中缓存依赖底层模型与 vLLM 版本，需要单独压测验证
 
 支持的图片输入：
 

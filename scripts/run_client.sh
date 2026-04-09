@@ -12,6 +12,7 @@ DEFAULT_PROMPT="请描述这张图片中的主要内容。"
 DEFAULT_MAX_TOKENS="256"
 DEFAULT_TEMPERATURE="0.1"
 DEFAULT_OUTPUT_FILE="${ROOT_DIR}/tmp/client_response.json"
+DEFAULT_SESSION_ID=""
 
 SERVER_URL="${SERVER_URL:-${DEFAULT_SERVER_URL}}"
 MODEL_NAME="${MODEL_NAME:-${DEFAULT_MODEL_NAME}}"
@@ -21,6 +22,7 @@ PROMPT="${PROMPT:-${DEFAULT_PROMPT}}"
 MAX_TOKENS="${MAX_TOKENS:-${DEFAULT_MAX_TOKENS}}"
 TEMPERATURE="${TEMPERATURE:-${DEFAULT_TEMPERATURE}}"
 OUTPUT_FILE="${OUTPUT_FILE:-${DEFAULT_OUTPUT_FILE}}"
+SESSION_ID="${SESSION_ID:-${DEFAULT_SESSION_ID}}"
 
 export SERVER_URL
 export MODEL_NAME
@@ -30,6 +32,7 @@ export PROMPT
 export MAX_TOKENS
 export TEMPERATURE
 export OUTPUT_FILE
+export SESSION_ID
 
 mkdir -p "$(dirname "${OUTPUT_FILE}")"
 
@@ -37,6 +40,9 @@ echo "[run_client] server_url=${SERVER_URL}"
 echo "[run_client] model_name=${MODEL_NAME}"
 echo "[run_client] request_mode=${REQUEST_MODE}"
 echo "[run_client] image_path=${IMAGE_PATH}"
+if [[ -n "${SESSION_ID}" ]]; then
+  echo "[run_client] session_id=${SESSION_ID}"
+fi
 
 curl -fsS "${SERVER_URL}/healthz" >/dev/null
 curl -fsS "${SERVER_URL}/readyz" | tee "${ROOT_DIR}/tmp/readyz.json" >/dev/null

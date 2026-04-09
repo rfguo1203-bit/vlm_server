@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import time
 import uuid
 
@@ -27,6 +29,15 @@ from app.services.image_service import normalize_local_image_reference
 from app.services.image_service import validate_image_count
 
 logger = get_logger(__name__)
+
+
+def _build_cache_salt(session_id: str, settings: Settings) -> str:
+    digest = hmac.new(
+        key=settings.session_cache_secret.encode("utf-8"),
+        msg=session_id.encode("utf-8"),
+        digestmod=hashlib.sha256,
+    )
+    return digest.hexdigest()
 
 
 def _normalize_message_content(
@@ -193,9 +204,23 @@ def _run_inference(
         max_tokens=max_tokens,
         temperature=temperature,
     )
+    chat_kwargs = {
+        "messages": conversation,
+        "sampling_params": sampling_params,
+    }
+    if request.session_id is not None:
+        if not getattr(runtime, "supports_cache_salt", lambda: False)():
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    "The current vLLM runtime does not support request-level cache "
+                    "isolation (`cache_salt`). Please upgrade or pin vLLM."
+                ),
+            )
+        chat_kwargs["cache_salt"] = _build_cache_salt(request.session_id, settings)
 
     try:
-        results = runtime.engine.chat(messages=conversation, sampling_params=sampling_params)
+        results = runtime.engine.chat(**chat_kwargs)
     except Exception as exc:
         if _is_oom_error(exc):
             raise HTTPException(
@@ -238,31 +263,48 @@ async def create_chat_completion(
     request_id: str,
 ) -> ChatCompletionResponse:
     image_count = count_images(request.messages)
+    session_hash_prefix = (
+        _build_cache_salt(request.session_id, settings)[:12]
+        if request.session_id is not None
+        else "none"
+    )
     started_at = time.perf_counter()
     logger.info(
-        "chat_completion_started request_id=%s model=%s image_count=%s max_tokens=%s temperature=%s",
+        "chat_completion_started request_id=%s model=%s image_count=%s max_tokens=%s temperature=%s session_id_present=%s session_key_hash_prefix=%s message_count=%s cache_reuse_mode=%s",
         request_id,
         request.model or settings.model_name,
         image_count,
         request.max_tokens or settings.default_max_tokens,
         request.temperature if request.temperature is not None else settings.default_temperature,
+        request.session_id is not None,
+        session_hash_prefix,
+        len(request.messages),
+        "prefix",
     )
     max_tokens = _resolve_max_tokens(request, settings)
     logger.info(
-        "chat_completion_queueing request_id=%s image_count=%s concurrency_limit=%s max_tokens=%s",
+        "chat_completion_queueing request_id=%s image_count=%s concurrency_limit=%s max_tokens=%s session_id_present=%s session_key_hash_prefix=%s message_count=%s cache_reuse_mode=%s",
         request_id,
         image_count,
         settings.inference_concurrency,
         max_tokens,
+        request.session_id is not None,
+        session_hash_prefix,
+        len(request.messages),
+        "prefix",
     )
     queue_started_at = time.perf_counter()
     async with engine_manager.request_semaphore:
         queue_wait_ms = int((time.perf_counter() - queue_started_at) * 1000)
         logger.info(
-            "chat_completion_admitted request_id=%s queue_wait_ms=%s concurrency_limit=%s",
+            "chat_completion_admitted request_id=%s queue_wait_ms=%s concurrency_limit=%s session_id_present=%s session_key_hash_prefix=%s message_count=%s cache_reuse_mode=%s",
             request_id,
             queue_wait_ms,
             settings.inference_concurrency,
+            request.session_id is not None,
+            session_hash_prefix,
+            len(request.messages),
+            "prefix",
         )
         try:
             response = await asyncio.wait_for(
@@ -272,12 +314,16 @@ async def create_chat_completion(
         except TimeoutError as exc:
             latency_ms = int((time.perf_counter() - started_at) * 1000)
             logger.warning(
-                "chat_completion_timeout request_id=%s timeout_seconds=%s image_count=%s queue_wait_ms=%s latency_ms=%s",
+                "chat_completion_timeout request_id=%s timeout_seconds=%s image_count=%s queue_wait_ms=%s latency_ms=%s session_id_present=%s session_key_hash_prefix=%s message_count=%s cache_reuse_mode=%s",
                 request_id,
                 settings.request_timeout_seconds,
                 image_count,
                 queue_wait_ms,
                 latency_ms,
+                request.session_id is not None,
+                session_hash_prefix,
+                len(request.messages),
+                "prefix",
             )
             raise HTTPException(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
@@ -289,7 +335,7 @@ async def create_chat_completion(
 
     latency_ms = int((time.perf_counter() - started_at) * 1000)
     logger.info(
-        "chat_completion_finished request_id=%s model=%s image_count=%s prompt_tokens=%s completion_tokens=%s queue_wait_ms=%s latency_ms=%s",
+        "chat_completion_finished request_id=%s model=%s image_count=%s prompt_tokens=%s completion_tokens=%s queue_wait_ms=%s latency_ms=%s session_id_present=%s session_key_hash_prefix=%s message_count=%s cache_reuse_mode=%s",
         request_id,
         response.model,
         image_count,
@@ -297,5 +343,9 @@ async def create_chat_completion(
         response.usage.completion_tokens,
         queue_wait_ms,
         latency_ms,
+        request.session_id is not None,
+        session_hash_prefix,
+        len(request.messages),
+        "prefix",
     )
     return response

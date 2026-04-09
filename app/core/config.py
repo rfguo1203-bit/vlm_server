@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     inference_backend: str = "vllm"
     tensor_parallel_size: int = 2
     skip_model_load: bool = False
+    enable_prefix_caching: bool = True
+    session_cache_secret: str = "dev-session-cache-secret"
 
     max_input_images: int = 4
     max_image_bytes: int = 20 * 1024 * 1024

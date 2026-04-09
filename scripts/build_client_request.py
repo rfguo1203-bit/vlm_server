@@ -65,6 +65,9 @@ def build_request_json() -> str:
         "max_tokens": int(_get_required_env("MAX_TOKENS")),
         "temperature": float(_get_required_env("TEMPERATURE")),
     }
+    session_id = os.environ.get("SESSION_ID")
+    if session_id:
+        payload["session_id"] = session_id
     return json.dumps(payload, ensure_ascii=False)
 
 
