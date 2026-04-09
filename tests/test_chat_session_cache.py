@@ -38,6 +38,7 @@ from app.schemas.chat import (
 from app.services.chat_service import _build_cache_salt
 from app.services.chat_service import _run_inference
 from app.services.chat_service import create_chat_completion
+from app.services.chat_service import reset_runtime_caches
 
 
 class FakeSamplingParams:
@@ -71,12 +72,20 @@ class FakeChatBackend:
 class FakeRuntime:
     def __init__(self, supports_cache_salt: bool = True) -> None:
         self.engine = FakeChatBackend(supports_cache_salt=supports_cache_salt)
+        self.reset_prefix_cache_calls: list[bool] = []
+        self.reset_mm_cache_calls = 0
+
+    def reset_prefix_cache(self, reset_running_requests: bool = False) -> None:
+        self.reset_prefix_cache_calls.append(reset_running_requests)
+
+    def reset_mm_cache(self) -> None:
+        self.reset_mm_cache_calls += 1
 
 
 class FakeEngineManager:
     def __init__(self, runtime: FakeRuntime) -> None:
         self.engine = runtime
-        self.status = SimpleNamespace(loaded=True, error_message=None)
+        self.status = SimpleNamespace(loaded=True, error_message=None, backend="vllm")
         self.request_semaphore = asyncio.Semaphore(1)
 
 
@@ -150,7 +159,7 @@ class ChatSessionCacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call["messages"][-1]["content"], "follow up")
         self.assertEqual(call["cache_salt"], _build_cache_salt("session-a", self.settings))
 
-    def test_session_id_requires_cache_salt_support(self) -> None:
+    def test_session_id_falls_back_when_cache_salt_is_unsupported(self) -> None:
         runtime = FakeRuntime(supports_cache_salt=False)
         engine_manager = FakeEngineManager(runtime)
         request = ChatCompletionRequest(
@@ -161,11 +170,11 @@ class ChatSessionCacheTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with self._patch_vllm():
-            with self.assertRaises(HTTPException) as ctx:
-                _run_inference(request, engine_manager, self.settings)
+            response = _run_inference(request, engine_manager, self.settings)
 
-        self.assertEqual(ctx.exception.status_code, 500)
-        self.assertIn("cache_salt", ctx.exception.detail)
+        self.assertEqual(response.choices[0].message.content, "assistant reply")
+        self.assertEqual(len(runtime.engine.calls), 1)
+        self.assertIsNone(runtime.engine.calls[0]["cache_salt"])
 
     def test_multimodal_request_passes_cache_salt(self) -> None:
         runtime = FakeRuntime()
@@ -201,6 +210,23 @@ class ChatSessionCacheTests(unittest.IsolatedAsyncioTestCase):
         call = runtime.engine.calls[0]
         self.assertEqual(call["cache_salt"], _build_cache_salt("session-image", self.settings))
         self.assertEqual(call["messages"][0]["content"][0]["image_pil"], "fake-image")
+
+    async def test_reset_runtime_caches_calls_prefix_and_mm_reset(self) -> None:
+        runtime = FakeRuntime()
+        engine_manager = FakeEngineManager(runtime)
+
+        response = await reset_runtime_caches(
+            engine_manager=engine_manager,
+            request_id="reset-1",
+            reset_prefix_cache=True,
+            reset_mm_cache=True,
+            reset_running_requests=False,
+        )
+
+        self.assertTrue(response.ok)
+        self.assertEqual(response.backend, "vllm")
+        self.assertEqual(runtime.reset_prefix_cache_calls, [False])
+        self.assertEqual(runtime.reset_mm_cache_calls, 1)
 
 
 if __name__ == "__main__":

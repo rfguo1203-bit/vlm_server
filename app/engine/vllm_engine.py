@@ -25,6 +25,22 @@ class VLLMEngine:
     def engine(self):
         return self._engine
 
+    def reset_prefix_cache(self, reset_running_requests: bool = False) -> None:
+        if self._engine is None:
+            raise RuntimeError("vLLM engine is not loaded.")
+        reset_fn = getattr(self._engine, "reset_prefix_cache", None)
+        if reset_fn is None:
+            raise RuntimeError("The current vLLM runtime does not support `reset_prefix_cache`.")
+        reset_fn(reset_running_requests=reset_running_requests)
+
+    def reset_mm_cache(self) -> None:
+        if self._engine is None:
+            raise RuntimeError("vLLM engine is not loaded.")
+        reset_fn = getattr(self._engine, "reset_mm_cache", None)
+        if reset_fn is None:
+            raise RuntimeError("The current vLLM runtime does not support `reset_mm_cache`.")
+        reset_fn()
+
     def load(self) -> None:
         model_path = Path(self._settings.model_path)
         if not model_path.exists():

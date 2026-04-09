@@ -59,6 +59,7 @@ CUDA_VISIBLE_DEVICES=0 TENSOR_PARALLEL_SIZE=1 bash scripts/run_server.sh
 ```bash
 curl http://127.0.0.1:8972/healthz
 curl http://127.0.0.1:8972/readyz
+curl http://127.0.0.1:8972/internal/engine-status
 ```
 
 路径图片请求：
@@ -105,10 +106,24 @@ curl -X POST http://127.0.0.1:8972/v1/chat/completions \
 
 多轮对话时，客户端每轮都带完整历史，并保持同一个 `session_id`。服务端不会保存历史，只会把 `session_id` 映射成请求级缓存隔离键，配合 vLLM 的 prefix caching 复用相同前缀的 KV cache。
 
+如果你的当前 vLLM 运行时不支持 `cache_salt`，服务会自动退回到“不带 session 隔离盐的 APC”。这时新会话开始前，应该先调用一次内部 reset 接口清空 prefix cache；如果是图文会话，建议同时清空 multimodal cache。
+
+reset 接口：
+
+```bash
+curl -X POST http://127.0.0.1:8972/internal/reset-caches \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reset_prefix_cache": true,
+    "reset_mm_cache": true,
+    "reset_running_requests": false
+  }'
+```
+
 最小约定：
 
 - 同一会话：`session_id` 不变
-- 新开会话：换一个新的 `session_id`
+- 新开会话：先调一次 `/internal/reset-caches`，再换一个新的 `session_id`
 - 每轮请求：`messages = 历史消息 + 本轮新增消息`
 - 收到回复后：把 assistant 回复追加回本地 `messages`
 
@@ -119,9 +134,26 @@ import json
 import urllib.request
 import uuid
 
-server_url = "http://127.0.0.1:8972/v1/chat/completions"
+base_url = "http://127.0.0.1:8972"
+server_url = f"{base_url}/v1/chat/completions"
 session_id = str(uuid.uuid4())
 messages = []
+
+reset_req = urllib.request.Request(
+    f"{base_url}/internal/reset-caches",
+    data=json.dumps(
+        {
+            "reset_prefix_cache": True,
+            "reset_mm_cache": False,
+            "reset_running_requests": False,
+        },
+        ensure_ascii=False,
+    ).encode("utf-8"),
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+with urllib.request.urlopen(reset_req) as resp:
+    print("reset:", resp.read().decode("utf-8"))
 
 for user_text in ["你好，请先记住我叫小王。", "我刚才叫什么名字？"]:
     messages.append({"role": "user", "content": user_text})
@@ -148,9 +180,11 @@ for user_text in ["你好，请先记住我叫小王。", "我刚才叫什么名
 
 说明：
 
-- 不传 `session_id` 时，接口仍可正常使用，但不会提供“同会话隔离的 KV cache 复用保证”
-- 传了 `session_id` 时，要求当前 vLLM 版本支持 APC 和 `cache_salt`
-- 图片多轮场景也可以带 `session_id`，但图片前缀是否稳定命中缓存依赖底层模型与 vLLM 版本，需要单独压测验证
+- 不传 `session_id` 时，接口仍可正常使用，但不会提供“同会话上下文标识”
+- 当前工程默认按“方案 2”工作：新会话前显式 reset cache，同一会话内依赖 APC 复用前缀
+- 纯文本会话建议 reset `prefix cache`
+- 图文会话建议 reset `prefix cache + mm cache`
+- 如果服务端日志出现 `cache_salt_not_supported`，说明当前运行时已自动退回到“无 session 隔离盐”的 APC 模式
 
 支持的图片输入：
 
@@ -236,3 +270,5 @@ asyncio.run(main())
 
 - 服务启动脚本：[scripts/run_server.sh](/Users/rkos/Workspace/vlm_server/scripts/run_server.sh)
 - 客户端请求脚本：[scripts/run_client.sh](/Users/rkos/Workspace/vlm_server/scripts/run_client.sh)
+- 文本 APC 验证脚本：[scripts/test_apc_text_session.py](/Users/rkos/Workspace/vlm_server/scripts/test_apc_text_session.py)
+- 图文 APC 验证脚本：[scripts/test_apc_multimodal_session.py](/Users/rkos/Workspace/vlm_server/scripts/test_apc_multimodal_session.py)

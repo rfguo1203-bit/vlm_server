@@ -97,3 +97,17 @@ class ReadinessResponse(BaseModel):
     backend: str
     loaded: bool
     error_message: str | None = None
+
+
+class CacheResetRequest(BaseModel):
+    reset_prefix_cache: bool = True
+    reset_mm_cache: bool = True
+    reset_running_requests: bool = False
+
+
+class CacheResetResponse(BaseModel):
+    ok: bool = True
+    backend: str
+    reset_prefix_cache: bool
+    reset_mm_cache: bool
+    reset_running_requests: bool

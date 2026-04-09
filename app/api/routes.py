@@ -5,8 +5,11 @@ from app.core.config import get_settings
 from app.engine.manager import get_engine_manager
 from app.schemas.chat import ChatCompletionRequest
 from app.schemas.chat import ChatCompletionResponse
+from app.schemas.chat import CacheResetRequest
+from app.schemas.chat import CacheResetResponse
 from app.schemas.chat import ReadinessResponse
 from app.services.chat_service import create_chat_completion
+from app.services.chat_service import reset_runtime_caches
 
 router = APIRouter()
 
@@ -57,3 +60,22 @@ async def engine_status() -> dict[str, str | bool | None]:
         "loaded": status.loaded,
         "error_message": status.error_message,
     }
+
+
+@router.post(
+    "/internal/reset-caches",
+    response_model=CacheResetResponse,
+    status_code=http_status.HTTP_200_OK,
+)
+async def reset_caches(
+    http_request: Request,
+    request: CacheResetRequest,
+) -> CacheResetResponse:
+    engine_manager = get_engine_manager()
+    return await reset_runtime_caches(
+        engine_manager=engine_manager,
+        request_id=http_request.state.request_id,
+        reset_prefix_cache=request.reset_prefix_cache,
+        reset_mm_cache=request.reset_mm_cache,
+        reset_running_requests=request.reset_running_requests,
+    )

@@ -12,6 +12,7 @@ from app.core.config import Settings
 from app.core.logging import get_logger
 from app.engine.manager import EngineManager
 from app.schemas.chat import (
+    CacheResetResponse,
     ChatChoice,
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -29,6 +30,7 @@ from app.services.image_service import normalize_local_image_reference
 from app.services.image_service import validate_image_count
 
 logger = get_logger(__name__)
+_CACHE_SALT_WARNING_EMITTED = False
 
 
 def _build_cache_salt(session_id: str, settings: Settings) -> str:
@@ -177,6 +179,7 @@ def _run_inference(
     engine_manager: EngineManager,
     settings: Settings,
 ) -> ChatCompletionResponse:
+    global _CACHE_SALT_WARNING_EMITTED
     status_info = engine_manager.status
     if not status_info.loaded or engine_manager.engine is None:
         raise HTTPException(
@@ -215,17 +218,34 @@ def _run_inference(
         results = runtime.engine.chat(**chat_kwargs)
     except TypeError as exc:
         if request.session_id is not None and "cache_salt" in str(exc):
+            chat_kwargs.pop("cache_salt", None)
+            if not _CACHE_SALT_WARNING_EMITTED:
+                logger.warning(
+                    "cache_salt_not_supported runtime=%s detail=%s fallback=retry_without_cache_salt",
+                    type(runtime.engine).__name__,
+                    exc,
+                )
+                _CACHE_SALT_WARNING_EMITTED = True
+            try:
+                results = runtime.engine.chat(**chat_kwargs)
+            except Exception as retry_exc:
+                if _is_oom_error(retry_exc):
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail=(
+                            "Inference failed due to GPU memory pressure. "
+                            "Please reduce image count, image size, or max_tokens and retry."
+                        ),
+                    ) from retry_exc
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Inference failed after retry without cache_salt: {retry_exc}",
+                ) from retry_exc
+        else:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=(
-                    "The current vLLM runtime rejected request-level cache isolation "
-                    "(`cache_salt`). Please verify the installed vLLM package/version."
-                ),
+                detail=f"Inference failed: {exc}",
             ) from exc
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Inference failed: {exc}",
-        ) from exc
     except Exception as exc:
         if _is_oom_error(exc):
             raise HTTPException(
@@ -261,6 +281,69 @@ def _run_inference(
     )
 
 
+def _reset_runtime_caches(
+    engine_manager: EngineManager,
+    reset_prefix_cache: bool,
+    reset_mm_cache: bool,
+    reset_running_requests: bool,
+) -> None:
+    status_info = engine_manager.status
+    if not status_info.loaded or engine_manager.engine is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=status_info.error_message or "Model is not ready.",
+        )
+
+    runtime = engine_manager.engine
+    try:
+        if reset_prefix_cache:
+            runtime.reset_prefix_cache(reset_running_requests=reset_running_requests)
+        if reset_mm_cache:
+            runtime.reset_mm_cache()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Cache reset failed: {exc}",
+        ) from exc
+
+
+async def reset_runtime_caches(
+    engine_manager: EngineManager,
+    request_id: str,
+    reset_prefix_cache: bool,
+    reset_mm_cache: bool,
+    reset_running_requests: bool,
+) -> CacheResetResponse:
+    logger.info(
+        "cache_reset_started request_id=%s reset_prefix_cache=%s reset_mm_cache=%s reset_running_requests=%s",
+        request_id,
+        reset_prefix_cache,
+        reset_mm_cache,
+        reset_running_requests,
+    )
+    async with engine_manager.request_semaphore:
+        await asyncio.to_thread(
+            _reset_runtime_caches,
+            engine_manager,
+            reset_prefix_cache,
+            reset_mm_cache,
+            reset_running_requests,
+        )
+    logger.info(
+        "cache_reset_finished request_id=%s reset_prefix_cache=%s reset_mm_cache=%s reset_running_requests=%s",
+        request_id,
+        reset_prefix_cache,
+        reset_mm_cache,
+        reset_running_requests,
+    )
+    return CacheResetResponse(
+        backend=engine_manager.status.backend,
+        reset_prefix_cache=reset_prefix_cache,
+        reset_mm_cache=reset_mm_cache,
+        reset_running_requests=reset_running_requests,
+    )
+
+
 async def create_chat_completion(
     request: ChatCompletionRequest,
     engine_manager: EngineManager,
@@ -284,7 +367,7 @@ async def create_chat_completion(
         request.session_id is not None,
         session_hash_prefix,
         len(request.messages),
-        "prefix",
+        "prefix_with_session_salt" if request.session_id is not None else "prefix",
     )
     max_tokens = _resolve_max_tokens(request, settings)
     logger.info(
@@ -296,7 +379,7 @@ async def create_chat_completion(
         request.session_id is not None,
         session_hash_prefix,
         len(request.messages),
-        "prefix",
+        "prefix_with_session_salt" if request.session_id is not None else "prefix",
     )
     queue_started_at = time.perf_counter()
     async with engine_manager.request_semaphore:
@@ -309,7 +392,7 @@ async def create_chat_completion(
             request.session_id is not None,
             session_hash_prefix,
             len(request.messages),
-            "prefix",
+            "prefix_with_session_salt" if request.session_id is not None else "prefix",
         )
         try:
             response = await asyncio.wait_for(
@@ -328,7 +411,7 @@ async def create_chat_completion(
                 request.session_id is not None,
                 session_hash_prefix,
                 len(request.messages),
-                "prefix",
+                "prefix_with_session_salt" if request.session_id is not None else "prefix",
             )
             raise HTTPException(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
@@ -351,6 +434,6 @@ async def create_chat_completion(
         request.session_id is not None,
         session_hash_prefix,
         len(request.messages),
-        "prefix",
+        "prefix_with_session_salt" if request.session_id is not None else "prefix",
     )
     return response

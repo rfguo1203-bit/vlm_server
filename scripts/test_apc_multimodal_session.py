@@ -64,6 +64,24 @@ def _post_json(
     return response_body, response_headers, latency_ms
 
 
+def _reset_caches(
+    base_server_url: str,
+    request_id: str,
+    timeout_seconds: float,
+) -> tuple[dict, dict[str, str], float]:
+    reset_url = f"{base_server_url}/internal/reset-caches"
+    return _post_json(
+        server_url=reset_url,
+        request_id=request_id,
+        body={
+            "reset_prefix_cache": True,
+            "reset_mm_cache": True,
+            "reset_running_requests": False,
+        },
+        timeout_seconds=timeout_seconds,
+    )
+
+
 def _write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -74,7 +92,8 @@ def _assistant_text(response: dict) -> str:
 
 
 def main() -> int:
-    server_url = _env("SERVER_URL", "http://127.0.0.1:8972/v1/chat/completions")
+    base_server_url = _env("SERVER_URL", "http://127.0.0.1:8972").rstrip("/")
+    server_url = f"{base_server_url}/v1/chat/completions"
     model_name = _env("MODEL_NAME", "Qwen3.5-27B")
     request_mode = _env("REQUEST_MODE", "path")
     image_path = Path(_env("IMAGE_PATH", "/tmp/example.png"))
@@ -83,7 +102,7 @@ def main() -> int:
     timeout_seconds = float(_env("CLIENT_TIMEOUT_SECONDS", "240"))
     output_dir = Path(_env("OUTPUT_DIR", "tmp/apc_multimodal"))
     session_id = _env("SESSION_ID", f"apc-mm-{uuid.uuid4().hex}")
-    isolate_session_id = _env("ISOLATE_SESSION_ID", f"apc-mm-isolate-{uuid.uuid4().hex}")
+    new_session_id = _env("NEW_SESSION_ID", f"apc-mm-new-{uuid.uuid4().hex}")
     round1_prompt = _env(
         "ROUND1_PROMPT",
         "Describe the image in one short paragraph and remember the key object for the next turn.",
@@ -106,14 +125,26 @@ def main() -> int:
     _log(f"image_path={image_path}")
     _log(f"image_bytes={image_bytes}")
     _log(f"session_id={session_id}")
-    _log(f"isolate_session_id={isolate_session_id}")
+    _log(f"new_session_id={new_session_id}")
     _log(
-        "goal=send an image+text first turn, a follow-up text-only second turn with the same session_id, "
-        "then replay the same full history with a different session_id"
+        "goal=reset caches before a fresh multimodal conversation, send image+text then follow-up, "
+        "then reset caches again before starting a brand-new multimodal conversation"
     )
-    _log("tip=compare server logs by request_id to judge whether image prefixes benefit from APC in your real runtime")
+    _log("tip=compare server logs by request_id to judge whether image prefixes benefit from APC before the next explicit reset")
 
     try:
+        reset1_request_id = f"{session_id}-reset-before-round1"
+        _log(f"reset start request_id={reset1_request_id} reset_prefix_cache=true reset_mm_cache=true")
+        reset1_response, reset1_headers, reset1_latency_ms = _reset_caches(
+            base_server_url=base_server_url,
+            request_id=reset1_request_id,
+            timeout_seconds=timeout_seconds,
+        )
+        _log(
+            f"reset done request_id={reset1_request_id} returned_request_id={reset1_headers.get('x-request-id', 'missing')} "
+            f"latency_ms={reset1_latency_ms:.1f} response={json.dumps(reset1_response, ensure_ascii=False)}"
+        )
+
         messages.append(
             {
                 "role": "user",
@@ -191,38 +222,62 @@ def main() -> int:
         _log(f"saved response_file={round2_file}")
         messages.append({"role": "assistant", "content": round2_reply})
 
-        replay_request_id = f"{isolate_session_id}-round2-replay"
-        replay_body = {
+        reset2_request_id = f"{new_session_id}-reset-before-new-session"
+        _log(f"reset start request_id={reset2_request_id} reset_prefix_cache=true reset_mm_cache=true")
+        reset2_response, reset2_headers, reset2_latency_ms = _reset_caches(
+            base_server_url=base_server_url,
+            request_id=reset2_request_id,
+            timeout_seconds=timeout_seconds,
+        )
+        _log(
+            f"reset done request_id={reset2_request_id} returned_request_id={reset2_headers.get('x-request-id', 'missing')} "
+            f"latency_ms={reset2_latency_ms:.1f} response={json.dumps(reset2_response, ensure_ascii=False)}"
+        )
+
+        new_messages = [
+            {
+                "role": "user",
+                "content": [
+                    image_part,
+                    {
+                        "type": "text",
+                        "text": round1_prompt,
+                    },
+                ],
+            }
+        ]
+        new_session_request_id = f"{new_session_id}-round1"
+        new_session_body = {
             "model": model_name,
-            "session_id": isolate_session_id,
-            "messages": messages,
+            "session_id": new_session_id,
+            "messages": new_messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
         _log(
-            f"send round=round2_replay request_id={replay_request_id} session_id={isolate_session_id} "
-            f"message_count={len(messages)} image_count=1"
+            f"send round=new_session_round1 request_id={new_session_request_id} session_id={new_session_id} "
+            f"message_count={len(new_messages)} image_count=1"
         )
-        replay_response, replay_headers, replay_latency_ms = _post_json(
+        new_session_response, new_session_headers, new_session_latency_ms = _post_json(
             server_url=server_url,
-            request_id=replay_request_id,
-            body=replay_body,
+            request_id=new_session_request_id,
+            body=new_session_body,
             timeout_seconds=timeout_seconds,
         )
-        replay_file = output_dir / "round2_replay_new_session.json"
-        _write_json(replay_file, replay_response)
-        replay_usage = replay_response.get("usage", {})
+        new_session_file = output_dir / "new_session_round1.json"
+        _write_json(new_session_file, new_session_response)
+        new_session_usage = new_session_response.get("usage", {})
         _log(
-            f"done round=round2_replay request_id={replay_request_id} "
-            f"returned_request_id={replay_headers.get('x-request-id', 'missing')} "
-            f"latency_ms={replay_latency_ms:.1f} prompt_tokens={replay_usage.get('prompt_tokens')} "
-            f"completion_tokens={replay_usage.get('completion_tokens')} total_tokens={replay_usage.get('total_tokens')}"
+            f"done round=new_session_round1 request_id={new_session_request_id} "
+            f"returned_request_id={new_session_headers.get('x-request-id', 'missing')} "
+            f"latency_ms={new_session_latency_ms:.1f} prompt_tokens={new_session_usage.get('prompt_tokens')} "
+            f"completion_tokens={new_session_usage.get('completion_tokens')} total_tokens={new_session_usage.get('total_tokens')}"
         )
-        _log(f"assistant round=round2_replay text={_assistant_text(replay_response)!r}")
-        _log(f"saved response_file={replay_file}")
+        _log(f"assistant round=new_session_round1 text={_assistant_text(new_session_response)!r}")
+        _log(f"saved response_file={new_session_file}")
         _log(
-            "inspect server logs for the three request_ids above; "
-            "if image prefixes are reusable in your runtime, round2 should usually look better than round1"
+            "inspect server logs for the reset and inference request_ids above; "
+            "round2 should reflect APC reuse inside one conversation, while new_session_round1 runs after explicit prefix/mm cache reset"
         )
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
