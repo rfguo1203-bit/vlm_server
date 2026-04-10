@@ -104,11 +104,52 @@ curl -X POST http://127.0.0.1:8972/v1/chat/completions \
   }'
 ```
 
-多轮对话时，客户端每轮都带完整历史，并保持同一个 `session_id`。服务端不会保存历史，只会把 `session_id` 映射成请求级缓存隔离键，配合 vLLM 的 prefix caching 复用相同前缀的 KV cache。
+支持的图片输入：
 
-如果你的当前 vLLM 运行时不支持 `cache_salt`，服务会自动退回到“不带 session 隔离盐的 APC”。这时新会话开始前，应该先调用一次内部 reset 接口清空 prefix cache；如果是图文会话，建议同时清空 multimodal cache。
+- `image_path`
+- `image_base64`
+- `image_url` 中的 `file://...`
+- `image_url` 中的 `data:...`
 
-reset 接口：
+不支持：
+
+- 远程 `http://` / `https://` 图片
+
+## 手动 Reset 的多轮对话
+
+当前工程的多轮对话推荐按“手动 reset cache”模式使用。
+
+原因：
+
+- 当前服务端不会保存会话历史
+- 客户端每轮都需要发送完整 `messages`
+- 当前运行时如果不支持 `cache_salt`，就不能按 `session_id` 做缓存隔离
+- 所以新会话开始前，需要显式清理 prefix cache；图文会话还要一起清理 multimodal cache
+
+### 调用约定
+
+- 同一会话内：`session_id` 保持不变
+- 同一会话内：每轮请求继续发送完整历史 `messages`
+- 新会话开始前：先调用 `/internal/reset-caches`
+- 新会话开始后：再使用一个新的 `session_id`
+
+`session_id` 在当前实现里主要用于请求链路标识和未来兼容，不应该把它理解成“服务端一定按 session 隔离了 KV cache”。
+
+### Reset 接口
+
+文本会话建议这样 reset：
+
+```bash
+curl -X POST http://127.0.0.1:8972/internal/reset-caches \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reset_prefix_cache": true,
+    "reset_mm_cache": false,
+    "reset_running_requests": false
+  }'
+```
+
+图文会话建议这样 reset：
 
 ```bash
 curl -X POST http://127.0.0.1:8972/internal/reset-caches \
@@ -120,14 +161,15 @@ curl -X POST http://127.0.0.1:8972/internal/reset-caches \
   }'
 ```
 
-最小约定：
+字段含义：
 
-- 同一会话：`session_id` 不变
-- 新开会话：先调一次 `/internal/reset-caches`，再换一个新的 `session_id`
-- 每轮请求：`messages = 历史消息 + 本轮新增消息`
-- 收到回复后：把 assistant 回复追加回本地 `messages`
+- `reset_prefix_cache`: 清理 prefix cache
+- `reset_mm_cache`: 清理多模态缓存
+- `reset_running_requests`: 是否连正在运行中的请求一起处理，默认保持 `false`
 
-一个简化的 `urllib.request` 多轮示例：
+### `urllib.request` 多轮示例
+
+下面是一个文本多轮对话示例，按当前推荐方式：
 
 ```python
 import json
@@ -135,12 +177,14 @@ import urllib.request
 import uuid
 
 base_url = "http://127.0.0.1:8972"
-server_url = f"{base_url}/v1/chat/completions"
+chat_url = f"{base_url}/v1/chat/completions"
+reset_url = f"{base_url}/internal/reset-caches"
+
 session_id = str(uuid.uuid4())
 messages = []
 
 reset_req = urllib.request.Request(
-    f"{base_url}/internal/reset-caches",
+    reset_url,
     data=json.dumps(
         {
             "reset_prefix_cache": True,
@@ -157,7 +201,6 @@ with urllib.request.urlopen(reset_req) as resp:
 
 for user_text in ["你好，请先记住我叫小王。", "我刚才叫什么名字？"]:
     messages.append({"role": "user", "content": user_text})
-
     body = {
         "model": "Qwen3.5-27B",
         "session_id": session_id,
@@ -166,7 +209,7 @@ for user_text in ["你好，请先记住我叫小王。", "我刚才叫什么名
         "temperature": 0.1,
     }
     req = urllib.request.Request(
-        server_url,
+        chat_url,
         data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -178,24 +221,42 @@ for user_text in ["你好，请先记住我叫小王。", "我刚才叫什么名
     messages.append({"role": "assistant", "content": assistant_text})
 ```
 
-说明：
+### 推荐用法
 
-- 不传 `session_id` 时，接口仍可正常使用，但不会提供“同会话上下文标识”
-- 当前工程默认按“方案 2”工作：新会话前显式 reset cache，同一会话内依赖 APC 复用前缀
-- 纯文本会话建议 reset `prefix cache`
-- 图文会话建议 reset `prefix cache + mm cache`
-- 如果服务端日志出现 `cache_salt_not_supported`，说明当前运行时已自动退回到“无 session 隔离盐”的 APC 模式
+- 文本多轮：
+  - 新会话前 reset `prefix cache`
+  - 同一会话内不断追加 `messages`
+- 图文多轮：
+  - 新会话前 reset `prefix cache + mm cache`
+  - 首轮带图，后续继续发送完整历史
+- 如果服务端日志里出现 `cache_salt_not_supported`
+  - 说明当前运行时已经自动退回到“无 session 隔离盐”的 APC 模式
+  - 这时更应该严格遵守“新会话前先 reset”的调用方式
 
-支持的图片输入：
+### APC 验证脚本
 
-- `image_path`
-- `image_base64`
-- `image_url` 中的 `file://...`
-- `image_url` 中的 `data:...`
+- 文本 APC 验证脚本：[scripts/test_apc_text_session.py](/Users/rkos/Workspace/vlm_server/scripts/test_apc_text_session.py)
+- 图文 APC 验证脚本：[scripts/test_apc_multimodal_session.py](/Users/rkos/Workspace/vlm_server/scripts/test_apc_multimodal_session.py)
 
-不支持：
+这两个脚本默认已经切到“长 prompt、短 decode”模式，方便观察 prefix cache 效果：
 
-- 远程 `http://` / `https://` 图片
+- 默认 `MAX_TOKENS=8`
+- 默认 `TEMPERATURE=0.0`
+- 默认会自动构造大量重复前缀文本
+
+如果你想进一步放大 APC 命中前后的差异，可以继续增大：
+
+- `PROMPT_REPEAT_COUNT`
+
+例如：
+
+```bash
+PROMPT_REPEAT_COUNT=512 MAX_TOKENS=8 python scripts/test_apc_text_session.py
+```
+
+```bash
+IMAGE_PATH=/path/to/example.png PROMPT_REPEAT_COUNT=384 MAX_TOKENS=8 python scripts/test_apc_multimodal_session.py
+```
 
 ## Python 代码直接调用
 
@@ -266,29 +327,86 @@ asyncio.run(main())
 - `create_chat_completion(...)` 是异步函数，需要在 `asyncio` 环境里调用
 - 直接函数调用和 HTTP 接口走的是同一套图片处理、超时、并发保护和错误逻辑
 
+### Python 多轮示例
+
+如果你在同一个 Python 进程里做多轮对话，也建议沿用和 HTTP 一样的调用约定：
+
+- 新会话前先 reset cache
+- 同一会话内维护完整 `messages`
+- 每轮把完整历史继续传给 `create_chat_completion(...)`
+
+文本多轮最小示例：
+
+```python
+import asyncio
+import uuid
+
+from app.core.config import get_settings
+from app.engine.manager import initialize_engine_manager
+from app.schemas.chat import ChatCompletionRequest, ChatMessage
+from app.services.chat_service import create_chat_completion, reset_runtime_caches
+
+
+async def main() -> None:
+    settings = get_settings()
+    engine_manager = initialize_engine_manager(settings)
+
+    if engine_manager.engine is None and not engine_manager.status.loaded:
+        engine_manager.load()
+
+    await reset_runtime_caches(
+        engine_manager=engine_manager,
+        request_id="local-reset-1",
+        reset_prefix_cache=True,
+        reset_mm_cache=False,
+        reset_running_requests=False,
+    )
+
+    session_id = str(uuid.uuid4())
+    messages: list[ChatMessage] = []
+
+    for idx, user_text in enumerate(
+        [
+            "你好，请先记住我叫小王。",
+            "我刚才叫什么名字？",
+        ],
+        start=1,
+    ):
+        messages.append(ChatMessage(role="user", content=user_text))
+        request = ChatCompletionRequest(
+            model=settings.model_name,
+            session_id=session_id,
+            messages=messages,
+            max_tokens=256,
+            temperature=0.1,
+        )
+        response = await create_chat_completion(
+            request=request,
+            engine_manager=engine_manager,
+            settings=settings,
+            request_id=f"local-chat-{idx}",
+        )
+        assistant_text = response.choices[0].message.content
+        print(assistant_text)
+        messages.append(ChatMessage(role="assistant", content=assistant_text))
+
+
+asyncio.run(main())
+```
+
+图文多轮时，把 reset 改成：
+
+```python
+await reset_runtime_caches(
+    engine_manager=engine_manager,
+    request_id="local-reset-mm-1",
+    reset_prefix_cache=True,
+    reset_mm_cache=True,
+    reset_running_requests=False,
+)
+```
+
 ## 相关脚本
 
 - 服务启动脚本：[scripts/run_server.sh](/Users/rkos/Workspace/vlm_server/scripts/run_server.sh)
 - 客户端请求脚本：[scripts/run_client.sh](/Users/rkos/Workspace/vlm_server/scripts/run_client.sh)
-- 文本 APC 验证脚本：[scripts/test_apc_text_session.py](/Users/rkos/Workspace/vlm_server/scripts/test_apc_text_session.py)
-- 图文 APC 验证脚本：[scripts/test_apc_multimodal_session.py](/Users/rkos/Workspace/vlm_server/scripts/test_apc_multimodal_session.py)
-
-这两个 APC 验证脚本默认已经切到“长 prompt、短 decode”模式，方便观察 prefix cache 效果：
-
-- 默认 `MAX_TOKENS=8`
-- 默认 `TEMPERATURE=0.0`
-- 默认会自动构造大量重复前缀文本
-
-如果你想进一步放大 APC 命中前后的差异，可以继续增大：
-
-- `PROMPT_REPEAT_COUNT`
-
-例如：
-
-```bash
-PROMPT_REPEAT_COUNT=512 MAX_TOKENS=8 python scripts/test_apc_text_session.py
-```
-
-```bash
-IMAGE_PATH=/path/to/example.png PROMPT_REPEAT_COUNT=384 MAX_TOKENS=8 python scripts/test_apc_multimodal_session.py
-```
