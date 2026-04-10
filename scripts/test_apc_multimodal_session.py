@@ -271,7 +271,9 @@ def main() -> int:
                         "text": round1_prompt,
                     },
                 ],
-            }
+            },
+            {"role": "assistant", "content": round1_reply},
+            {"role": "user", "content": round2_prompt},
         ]
         new_session_request_id = f"{new_session_id}-round1"
         new_session_body = {
@@ -283,7 +285,8 @@ def main() -> int:
         }
         _log(
             f"send round=new_session_round1 request_id={new_session_request_id} session_id={new_session_id} "
-            f"message_count={len(new_messages)} image_count=1 prompt_text_chars={len(round1_prompt)}"
+            f"message_count={len(new_messages)} image_count=1 "
+            f"prompt_text_chars={len(round1_prompt) + len(round2_prompt) + len(round1_reply)}"
         )
         new_session_response, new_session_headers, new_session_latency_ms = _post_json(
             server_url=server_url,
@@ -304,7 +307,7 @@ def main() -> int:
         _log(f"saved response_file={new_session_file}")
         _log(
             "inspect server logs for the reset and inference request_ids above; "
-            "round2 should reflect APC reuse inside one conversation, while new_session_round1 runs after explicit prefix/mm cache reset. "
+            "round2 should reflect APC reuse inside one conversation, while new_session_round1 now uses the same effective history length after explicit prefix/mm cache reset. "
             "Because this script uses a very long text prefix and very short decode, latency differences are more indicative of prefix-cache reuse."
         )
     except urllib.error.HTTPError as exc:

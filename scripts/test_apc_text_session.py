@@ -197,7 +197,11 @@ def main() -> int:
             f"latency_ms={reset2_latency_ms:.1f} response={json.dumps(reset2_response, ensure_ascii=False)}"
         )
 
-        new_messages = [{"role": "user", "content": first_prompt}]
+        new_messages = [
+            {"role": "user", "content": first_prompt},
+            {"role": "assistant", "content": assistant_reply},
+            {"role": "user", "content": second_prompt},
+        ]
         new_session_request_id = f"{new_session_id}-round1"
         new_session_request_body = {
             "model": model_name,
@@ -230,7 +234,7 @@ def main() -> int:
         _log(f"saved response_file={new_session_file}")
         _log(
             "inspect server logs for the reset and inference request_ids above; "
-            "round2 should benefit from APC reuse within the same conversation, while new_session_round1 runs after an explicit cache reset. "
+            "round2 should benefit from APC reuse within the same conversation, while new_session_round1 now uses the same effective history length after an explicit cache reset. "
             "Because this script uses a very long prompt and very short decode, latency differences are more indicative of prefix-cache reuse."
         )
     except urllib.error.HTTPError as exc:
