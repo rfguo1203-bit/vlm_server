@@ -91,25 +91,47 @@ def _assistant_text(response: dict) -> str:
     return response["choices"][0]["message"]["content"]
 
 
+def _build_long_text_block(seed_text: str, repeat_count: int) -> str:
+    block = (
+        "Multimodal prefix-caching evaluation context. "
+        "Keep this text unchanged across requests so the shared prompt prefix stays large. "
+        f"Seed text: {seed_text}\n"
+    )
+    return block * repeat_count
+
+
 def main() -> int:
     base_server_url = _env("SERVER_URL", "http://127.0.0.1:8972").rstrip("/")
     server_url = f"{base_server_url}/v1/chat/completions"
     model_name = _env("MODEL_NAME", "Qwen3.5-27B")
     request_mode = _env("REQUEST_MODE", "path")
     image_path = Path(_env("IMAGE_PATH", "/tmp/example.png"))
-    max_tokens = int(_env("MAX_TOKENS", "256"))
-    temperature = float(_env("TEMPERATURE", "0.1"))
+    max_tokens = int(_env("MAX_TOKENS", "8"))
+    temperature = float(_env("TEMPERATURE", "0.0"))
     timeout_seconds = float(_env("CLIENT_TIMEOUT_SECONDS", "240"))
     output_dir = Path(_env("OUTPUT_DIR", "tmp/apc_multimodal"))
     session_id = _env("SESSION_ID", f"apc-mm-{uuid.uuid4().hex}")
     new_session_id = _env("NEW_SESSION_ID", f"apc-mm-new-{uuid.uuid4().hex}")
+    prompt_repeat_count = int(_env("PROMPT_REPEAT_COUNT", "192"))
+    long_prefix = _build_long_text_block(
+        _env("PREFIX_SEED_TEXT", "Primary object tracking. cache-check."),
+        prompt_repeat_count,
+    )
     round1_prompt = _env(
         "ROUND1_PROMPT",
-        "Describe the image in one short paragraph and remember the key object for the next turn.",
+        (
+            f"{long_prefix}\n"
+            "Question: Identify the main object in the image. "
+            "Answer with only a short noun phrase."
+        ),
     )
     round2_prompt = _env(
         "ROUND2_PROMPT",
-        "Based on the same image, what was the key object you identified in the previous answer?",
+        (
+            f"{long_prefix}\n"
+            "Follow-up question: Repeat the same main object from the image. "
+            "Answer with only a short noun phrase."
+        ),
     )
 
     if not image_path.is_file():
@@ -121,6 +143,10 @@ def main() -> int:
 
     _log(f"server_url={server_url}")
     _log(f"model_name={model_name}")
+    _log("mode=prompt_heavy_decode_light")
+    _log(f"prompt_repeat_count={prompt_repeat_count}")
+    _log(f"max_tokens={max_tokens}")
+    _log(f"temperature={temperature}")
     _log(f"request_mode={request_mode}")
     _log(f"image_path={image_path}")
     _log(f"image_bytes={image_bytes}")
@@ -167,7 +193,7 @@ def main() -> int:
         }
         _log(
             f"send round=round1 request_id={round1_request_id} session_id={session_id} "
-            f"message_count={len(messages)} image_count=1"
+            f"message_count={len(messages)} image_count=1 prompt_text_chars={len(round1_prompt)}"
         )
         round1_response, round1_headers, round1_latency_ms = _post_json(
             server_url=server_url,
@@ -200,7 +226,8 @@ def main() -> int:
         }
         _log(
             f"send round=round2 request_id={round2_request_id} session_id={session_id} "
-            f"message_count={len(messages)} image_count=1"
+            f"message_count={len(messages)} image_count=1 "
+            f"prompt_text_chars={len(round1_prompt) + len(round2_prompt) + len(round1_reply)}"
         )
         round2_response, round2_headers, round2_latency_ms = _post_json(
             server_url=server_url,
@@ -256,7 +283,7 @@ def main() -> int:
         }
         _log(
             f"send round=new_session_round1 request_id={new_session_request_id} session_id={new_session_id} "
-            f"message_count={len(new_messages)} image_count=1"
+            f"message_count={len(new_messages)} image_count=1 prompt_text_chars={len(round1_prompt)}"
         )
         new_session_response, new_session_headers, new_session_latency_ms = _post_json(
             server_url=server_url,
@@ -277,7 +304,8 @@ def main() -> int:
         _log(f"saved response_file={new_session_file}")
         _log(
             "inspect server logs for the reset and inference request_ids above; "
-            "round2 should reflect APC reuse inside one conversation, while new_session_round1 runs after explicit prefix/mm cache reset"
+            "round2 should reflect APC reuse inside one conversation, while new_session_round1 runs after explicit prefix/mm cache reset. "
+            "Because this script uses a very long text prefix and very short decode, latency differences are more indicative of prefix-cache reuse."
         )
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")

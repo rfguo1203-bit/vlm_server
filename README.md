@@ -272,3 +272,23 @@ asyncio.run(main())
 - 客户端请求脚本：[scripts/run_client.sh](/Users/rkos/Workspace/vlm_server/scripts/run_client.sh)
 - 文本 APC 验证脚本：[scripts/test_apc_text_session.py](/Users/rkos/Workspace/vlm_server/scripts/test_apc_text_session.py)
 - 图文 APC 验证脚本：[scripts/test_apc_multimodal_session.py](/Users/rkos/Workspace/vlm_server/scripts/test_apc_multimodal_session.py)
+
+这两个 APC 验证脚本默认已经切到“长 prompt、短 decode”模式，方便观察 prefix cache 效果：
+
+- 默认 `MAX_TOKENS=8`
+- 默认 `TEMPERATURE=0.0`
+- 默认会自动构造大量重复前缀文本
+
+如果你想进一步放大 APC 命中前后的差异，可以继续增大：
+
+- `PROMPT_REPEAT_COUNT`
+
+例如：
+
+```bash
+PROMPT_REPEAT_COUNT=512 MAX_TOKENS=8 python scripts/test_apc_text_session.py
+```
+
+```bash
+IMAGE_PATH=/path/to/example.png PROMPT_REPEAT_COUNT=384 MAX_TOKENS=8 python scripts/test_apc_multimodal_session.py
+```
