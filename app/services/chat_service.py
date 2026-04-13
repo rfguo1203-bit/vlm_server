@@ -180,6 +180,20 @@ def _run_inference(
     settings: Settings,
 ) -> ChatCompletionResponse:
     global _CACHE_SALT_WARNING_EMITTED
+    requested_model_name = engine_manager.resolve_model_name(request.model)
+    try:
+        engine_manager.ensure_model(requested_model_name)
+    except RuntimeError as exc:
+        if "Unsupported model" in str(exc):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
     status_info = engine_manager.status
     if not status_info.loaded or engine_manager.engine is None:
         raise HTTPException(
@@ -267,7 +281,7 @@ def _run_inference(
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex}",
         created=int(time.time()),
-        model=request.model or settings.model_name,
+        model=status_info.model_name,
         choices=[
             ChatChoice(
                 message=ChatMessageResponse(content=generated_text),

@@ -85,8 +85,20 @@ class FakeRuntime:
 class FakeEngineManager:
     def __init__(self, runtime: FakeRuntime) -> None:
         self.engine = runtime
-        self.status = SimpleNamespace(loaded=True, error_message=None, backend="vllm")
+        self.status = SimpleNamespace(
+            loaded=True,
+            error_message=None,
+            backend="vllm",
+            model_name="test-model",
+        )
         self.request_semaphore = asyncio.Semaphore(1)
+
+    def resolve_model_name(self, requested_model_name: str | None) -> str:
+        return requested_model_name or self.status.model_name
+
+    def ensure_model(self, model_name: str) -> None:
+        if model_name != self.status.model_name:
+            raise RuntimeError(f"Unsupported model `{model_name}`.")
 
 
 class ChatSessionCacheTests(unittest.IsolatedAsyncioTestCase):
@@ -210,6 +222,22 @@ class ChatSessionCacheTests(unittest.IsolatedAsyncioTestCase):
         call = runtime.engine.calls[0]
         self.assertEqual(call["cache_salt"], _build_cache_salt("session-image", self.settings))
         self.assertEqual(call["messages"][0]["content"][0]["image_pil"], "fake-image")
+
+    def test_unsupported_model_returns_400(self) -> None:
+        runtime = FakeRuntime()
+        engine_manager = FakeEngineManager(runtime)
+        request = ChatCompletionRequest(
+            model="gemma-4-26B-A4B-it",
+            messages=[ChatMessage(role="user", content="hello")],
+            max_tokens=32,
+        )
+
+        with self._patch_vllm():
+            with self.assertRaises(HTTPException) as context:
+                _run_inference(request, engine_manager, self.settings)
+
+        self.assertEqual(context.exception.status_code, 400)
+        self.assertIn("Unsupported model", context.exception.detail)
 
     async def test_reset_runtime_caches_calls_prefix_and_mm_reset(self) -> None:
         runtime = FakeRuntime()

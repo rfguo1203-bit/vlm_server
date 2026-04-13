@@ -41,6 +41,20 @@ class EngineManager:
             self._status.error_message = "Model loading skipped by configuration."
             return
 
+        self.ensure_model(self._settings.model_name)
+
+    def resolve_model_name(self, requested_model_name: str | None) -> str:
+        return requested_model_name or self._settings.model_name
+
+    def ensure_model(self, model_name: str) -> None:
+        if self._settings.skip_model_load:
+            self._status.loaded = False
+            self._status.error_message = "Model loading skipped by configuration."
+            return
+
+        if self._status.loaded and self._status.model_name == model_name and self._engine is not None:
+            return
+
         backend = self._settings.inference_backend.lower()
         if backend != "vllm":
             raise RuntimeError(
@@ -48,8 +62,16 @@ class EngineManager:
                 "Only `vllm` is implemented in the current version."
             )
 
-        runtime = VLLMEngine(self._settings)
+        try:
+            model_path = self._settings.resolve_model_path(model_name)
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
 
+        runtime = VLLMEngine(
+            self._settings,
+            model_name=model_name,
+            model_path=model_path,
+        )
         try:
             runtime.load()
         except Exception as exc:
@@ -57,8 +79,8 @@ class EngineManager:
             self._status.error_message = str(exc)
             raise RuntimeError(
                 "Model load failed during application startup. "
-                f"backend={backend}, model={self._settings.model_name}, "
-                f"path={self._settings.model_path}. Root cause: {exc}"
+                f"backend={backend}, model={model_name}, "
+                f"path={model_path}. Root cause: {exc}"
             ) from exc
 
         self._engine = runtime

@@ -7,13 +7,20 @@ from app.engine.base import EngineStatus
 
 
 class VLLMEngine:
-    def __init__(self, settings: Settings):
+    def __init__(
+        self,
+        settings: Settings,
+        model_name: str | None = None,
+        model_path: str | None = None,
+    ):
         self._settings = settings
+        self._model_name = model_name or settings.model_name
+        self._model_path = model_path or settings.model_path
         self._engine = None
         self._status = EngineStatus(
             backend="vllm",
-            model_name=settings.model_name,
-            model_path=settings.model_path,
+            model_name=self._model_name,
+            model_path=self._model_path,
             loaded=False,
         )
 
@@ -42,7 +49,7 @@ class VLLMEngine:
         reset_fn()
 
     def load(self) -> None:
-        model_path = Path(self._settings.model_path)
+        model_path = Path(self._model_path)
         if not model_path.exists():
             raise RuntimeError(f"Model path does not exist: {model_path}")
 
@@ -71,13 +78,13 @@ class VLLMEngine:
                     "Please verify the installed vLLM package really matches the expected version."
                 ) from exc
             raise RuntimeError(
-                f"Failed to initialize vLLM for model `{self._settings.model_name}` "
+                f"Failed to initialize vLLM for model `{self._model_name}` "
                 f"from `{model_path}` with tensor_parallel_size="
                 f"{self._settings.tensor_parallel_size}: {exc}"
             ) from exc
         except Exception as exc:
             raise RuntimeError(
-                f"Failed to initialize vLLM for model `{self._settings.model_name}` "
+                f"Failed to initialize vLLM for model `{self._model_name}` "
                 f"from `{model_path}` with tensor_parallel_size="
                 f"{self._settings.tensor_parallel_size}: {exc}"
             ) from exc

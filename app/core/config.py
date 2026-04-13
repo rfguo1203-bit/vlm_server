@@ -1,3 +1,4 @@
+import json
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,6 +20,7 @@ class Settings(BaseSettings):
 
     model_name: str = "Qwen3.5-27B"
     model_path: str = "/home/user/g00806422/data/weight/Qwen3.5-27B"
+    additional_model_paths_json: str = "{}"
     inference_backend: str = "vllm"
     tensor_parallel_size: int = 2
     skip_model_load: bool = False
@@ -39,6 +41,49 @@ class Settings(BaseSettings):
     @property
     def server_url(self) -> str:
         return f"http://{self.host}:{self.port}"
+
+    @property
+    def supported_model_paths(self) -> dict[str, str]:
+        model_paths = {
+            "Qwen3.5-27B": "/home/user/g00806422/data/weight/Qwen3.5-27B",
+            "gemma-4-26B-A4B-it": "/home/user/g00806422/data/weight/gemma-4-26B-A4B-it",
+        }
+        model_paths[self.model_name] = self.model_path
+        model_paths.update(self._parse_additional_model_paths())
+        return model_paths
+
+    def resolve_model_path(self, model_name: str) -> str:
+        model_path = self.supported_model_paths.get(model_name)
+        if model_path is None:
+            supported_models = ", ".join(sorted(self.supported_model_paths.keys()))
+            raise ValueError(
+                f"Unsupported model `{model_name}`. Supported models: {supported_models}"
+            )
+        return model_path
+
+    def _parse_additional_model_paths(self) -> dict[str, str]:
+        raw = self.additional_model_paths_json.strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "Invalid ADDITIONAL_MODEL_PATHS_JSON. Expecting a JSON object."
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                "Invalid ADDITIONAL_MODEL_PATHS_JSON. Expecting a JSON object."
+            )
+        normalized: dict[str, str] = {}
+        for model_name, model_path in parsed.items():
+            if not isinstance(model_name, str) or not isinstance(model_path, str):
+                raise ValueError(
+                    "Invalid ADDITIONAL_MODEL_PATHS_JSON. "
+                    "All model names and model paths must be strings."
+                )
+            normalized[model_name] = model_path
+        return normalized
 
 
 @lru_cache(maxsize=1)

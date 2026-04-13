@@ -14,6 +14,7 @@ cp .env.example .env
 - `PORT=8972`
 - `MODEL_NAME=Qwen3.5-27B`
 - `MODEL_PATH=/home/user/g00806422/data/weight/Qwen3.5-27B`
+- `ADDITIONAL_MODEL_PATHS_JSON={}`
 - `TENSOR_PARALLEL_SIZE=2`
 - `ENABLE_PREFIX_CACHING=true`
 - `SESSION_CACHE_SECRET=please-change-this-in-prod`
@@ -102,6 +103,23 @@ curl -X POST http://127.0.0.1:8972/v1/chat/completions \
     "max_tokens": 256,
     "temperature": 0.1
   }'
+```
+
+### 模型切换
+
+当前服务支持以下模型名：
+
+- `Qwen3.5-27B`（默认）
+- `gemma-4-26B-A4B-it`
+
+请求中通过 `model` 字段切换，服务会按需加载目标模型。`gemma-4-26B-A4B-it` 默认映射路径：
+
+- `/home/user/g00806422/data/weight/gemma-4-26B-A4B-it`
+
+如果需要扩展更多模型，可在 `.env` 里设置 `ADDITIONAL_MODEL_PATHS_JSON`，例如：
+
+```bash
+ADDITIONAL_MODEL_PATHS_JSON='{"my-model":"/path/to/my-model"}'
 ```
 
 支持的图片输入：
