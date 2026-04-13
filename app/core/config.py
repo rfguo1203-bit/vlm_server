@@ -47,7 +47,7 @@ class Settings(BaseSettings):
         model_paths = {
             "Qwen3.5-27B": "/home/user/g00806422/data/weight/Qwen3.5-27B",
             "gemma-4-26B-A4B-it": "/home/user/g00806422/data/weight/gemma-4-26B-A4B-it",
-            "gemma-4-E4B-it": "/home/user/g00806422/data/weight/gemma-4-26B-A4B-it",
+            "gemma-4-E4B-it": "/home/user/g00806422/data/weight/gemma-4-E4B-it",
         }
         if self.model_path:
             model_paths[self.model_name] = self.model_path

@@ -114,7 +114,7 @@ curl -X POST http://127.0.0.1:8972/v1/chat/completions \
 
 请求中通过 `model` 字段切换，服务会按需加载目标模型。内置映射如下：
 
-- `gemma-4-E4B-it`: `/home/user/g00806422/data/weight/gemma-4-26B-A4B-it`
+- `gemma-4-E4B-it`: `/home/user/g00806422/data/weight/gemma-4-E4B-it`
 - `Qwen3.5-27B`: `/home/user/g00806422/data/weight/Qwen3.5-27B`
 - `gemma-4-26B-A4B-it`: `/home/user/g00806422/data/weight/gemma-4-26B-A4B-it`
 
