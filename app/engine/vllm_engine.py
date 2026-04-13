@@ -15,7 +15,7 @@ class VLLMEngine:
     ):
         self._settings = settings
         self._model_name = model_name or settings.model_name
-        self._model_path = model_path or settings.model_path
+        self._model_path = model_path or settings.resolve_model_path(self._model_name)
         self._engine = None
         self._status = EngineStatus(
             backend="vllm",

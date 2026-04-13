@@ -12,8 +12,7 @@ cp .env.example .env
 
 - `HOST=127.0.0.1`
 - `PORT=8972`
-- `MODEL_NAME=Qwen3.5-27B`
-- `MODEL_PATH=/home/user/g00806422/data/weight/Qwen3.5-27B`
+- `MODEL_NAME=gemma-4-E4B-it`
 - `ADDITIONAL_MODEL_PATHS_JSON={}`
 - `TENSOR_PARALLEL_SIZE=2`
 - `ENABLE_PREFIX_CACHING=true`
@@ -81,7 +80,7 @@ REQUEST_MODE=base64 IMAGE_PATH=/path/to/example.png bash scripts/run_client.sh
 curl -X POST http://127.0.0.1:8972/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "Qwen3.5-27B",
+    "model": "gemma-4-E4B-it",
     "session_id": "demo-session-001",
     "messages": [
       {
@@ -109,12 +108,15 @@ curl -X POST http://127.0.0.1:8972/v1/chat/completions \
 
 当前服务支持以下模型名：
 
-- `Qwen3.5-27B`（默认）
+- `gemma-4-E4B-it`（默认）
+- `Qwen3.5-27B`
 - `gemma-4-26B-A4B-it`
 
-请求中通过 `model` 字段切换，服务会按需加载目标模型。`gemma-4-26B-A4B-it` 默认映射路径：
+请求中通过 `model` 字段切换，服务会按需加载目标模型。内置映射如下：
 
-- `/home/user/g00806422/data/weight/gemma-4-26B-A4B-it`
+- `gemma-4-E4B-it`: `/home/user/g00806422/data/weight/gemma-4-26B-A4B-it`
+- `Qwen3.5-27B`: `/home/user/g00806422/data/weight/Qwen3.5-27B`
+- `gemma-4-26B-A4B-it`: `/home/user/g00806422/data/weight/gemma-4-26B-A4B-it`
 
 如果需要扩展更多模型，可在 `.env` 里设置 `ADDITIONAL_MODEL_PATHS_JSON`，例如：
 

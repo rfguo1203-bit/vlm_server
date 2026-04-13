@@ -18,8 +18,8 @@ class Settings(BaseSettings):
     port: int = 8972
     log_level: str = "info"
 
-    model_name: str = "Qwen3.5-27B"
-    model_path: str = "/home/user/g00806422/data/weight/Qwen3.5-27B"
+    model_name: str = "gemma-4-E4B-it"
+    model_path: str | None = None
     additional_model_paths_json: str = "{}"
     inference_backend: str = "vllm"
     tensor_parallel_size: int = 2
@@ -47,8 +47,10 @@ class Settings(BaseSettings):
         model_paths = {
             "Qwen3.5-27B": "/home/user/g00806422/data/weight/Qwen3.5-27B",
             "gemma-4-26B-A4B-it": "/home/user/g00806422/data/weight/gemma-4-26B-A4B-it",
+            "gemma-4-E4B-it": "/home/user/g00806422/data/weight/gemma-4-26B-A4B-it",
         }
-        model_paths[self.model_name] = self.model_path
+        if self.model_path:
+            model_paths[self.model_name] = self.model_path
         model_paths.update(self._parse_additional_model_paths())
         return model_paths
 

@@ -12,10 +12,14 @@ class EngineManager:
         self._settings = settings
         self._engine = None
         self._request_semaphore: asyncio.Semaphore | None = None
+        try:
+            initial_model_path = settings.resolve_model_path(settings.model_name)
+        except ValueError:
+            initial_model_path = settings.model_path or ""
         self._status = EngineStatus(
             backend=settings.inference_backend,
             model_name=settings.model_name,
-            model_path=settings.model_path,
+            model_path=initial_model_path,
             loaded=False,
         )
 
