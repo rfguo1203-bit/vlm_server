@@ -20,6 +20,7 @@ cp .env.example .env
 - `INFERENCE_CONCURRENCY=1`
 - `REQUEST_TIMEOUT_SECONDS=120`
 - `MAX_OUTPUT_TOKENS_LIMIT=10240`
+- `DEFAULT_ENABLE_THINKING=true`
 
 如果只想做结构调试、不加载真实模型：
 
@@ -100,9 +101,12 @@ curl -X POST http://127.0.0.1:8972/v1/chat/completions \
       }
     ],
     "max_tokens": 256,
-    "temperature": 0.1
+    "temperature": 0.1,
+    "enable_thinking": true
   }'
 ```
+
+`enable_thinking` 默认开启（由服务端 `DEFAULT_ENABLE_THINKING=true` 控制）；如果某个请求不希望开启，可显式传 `false`。
 
 ### 模型切换
 

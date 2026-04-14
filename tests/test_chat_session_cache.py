@@ -48,18 +48,26 @@ class FakeSamplingParams:
 
 
 class FakeChatBackend:
-    def __init__(self, supports_cache_salt: bool = True) -> None:
+    def __init__(
+        self,
+        supports_cache_salt: bool = True,
+        supports_chat_template_kwargs: bool = True,
+    ) -> None:
         self.calls: list[dict] = []
         self.supports_cache_salt = supports_cache_salt
+        self.supports_chat_template_kwargs = supports_chat_template_kwargs
 
-    def chat(self, messages, sampling_params, cache_salt=None):
+    def chat(self, messages, sampling_params, cache_salt=None, chat_template_kwargs=None):
         if cache_salt is not None and not self.supports_cache_salt:
             raise TypeError("chat() got an unexpected keyword argument 'cache_salt'")
+        if chat_template_kwargs is not None and not self.supports_chat_template_kwargs:
+            raise TypeError("chat() got an unexpected keyword argument 'chat_template_kwargs'")
         self.calls.append(
             {
                 "messages": messages,
                 "sampling_params": sampling_params,
                 "cache_salt": cache_salt,
+                "chat_template_kwargs": chat_template_kwargs,
             }
         )
         return [
@@ -70,8 +78,15 @@ class FakeChatBackend:
 
 
 class FakeRuntime:
-    def __init__(self, supports_cache_salt: bool = True) -> None:
-        self.engine = FakeChatBackend(supports_cache_salt=supports_cache_salt)
+    def __init__(
+        self,
+        supports_cache_salt: bool = True,
+        supports_chat_template_kwargs: bool = True,
+    ) -> None:
+        self.engine = FakeChatBackend(
+            supports_cache_salt=supports_cache_salt,
+            supports_chat_template_kwargs=supports_chat_template_kwargs,
+        )
         self.reset_prefix_cache_calls: list[bool] = []
         self.reset_mm_cache_calls = 0
 
@@ -137,6 +152,7 @@ class ChatSessionCacheTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.choices[0].message.content, "assistant reply")
         self.assertIsNone(runtime.engine.calls[0]["cache_salt"])
+        self.assertEqual(runtime.engine.calls[0]["chat_template_kwargs"], {"enable_thinking": True})
         self.assertEqual(runtime.engine.calls[0]["messages"], [{"role": "user", "content": "hello"}])
 
     async def test_multiturn_request_passes_full_history_and_cache_salt(self) -> None:
@@ -170,6 +186,7 @@ class ChatSessionCacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call["messages"][0]["content"], "You are helpful.")
         self.assertEqual(call["messages"][-1]["content"], "follow up")
         self.assertEqual(call["cache_salt"], _build_cache_salt("session-a", self.settings))
+        self.assertEqual(call["chat_template_kwargs"], {"enable_thinking": True})
 
     def test_session_id_falls_back_when_cache_salt_is_unsupported(self) -> None:
         runtime = FakeRuntime(supports_cache_salt=False)
@@ -221,7 +238,39 @@ class ChatSessionCacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.choices[0].message.content, "assistant reply")
         call = runtime.engine.calls[0]
         self.assertEqual(call["cache_salt"], _build_cache_salt("session-image", self.settings))
+        self.assertEqual(call["chat_template_kwargs"], {"enable_thinking": True})
         self.assertEqual(call["messages"][0]["content"][0]["image_pil"], "fake-image")
+
+    def test_request_can_disable_thinking(self) -> None:
+        runtime = FakeRuntime()
+        engine_manager = FakeEngineManager(runtime)
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=[ChatMessage(role="user", content="hello")],
+            max_tokens=32,
+            enable_thinking=False,
+        )
+
+        with self._patch_vllm():
+            response = _run_inference(request, engine_manager, self.settings)
+
+        self.assertEqual(response.choices[0].message.content, "assistant reply")
+        self.assertEqual(runtime.engine.calls[0]["chat_template_kwargs"], {"enable_thinking": False})
+
+    def test_fallback_when_chat_template_kwargs_unsupported(self) -> None:
+        runtime = FakeRuntime(supports_chat_template_kwargs=False)
+        engine_manager = FakeEngineManager(runtime)
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=[ChatMessage(role="user", content="hello")],
+            max_tokens=32,
+        )
+
+        with self._patch_vllm():
+            response = _run_inference(request, engine_manager, self.settings)
+
+        self.assertEqual(response.choices[0].message.content, "assistant reply")
+        self.assertIsNone(runtime.engine.calls[0]["chat_template_kwargs"])
 
     def test_unsupported_model_returns_400(self) -> None:
         runtime = FakeRuntime()

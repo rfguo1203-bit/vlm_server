@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     default_max_tokens: int = 512
     max_output_tokens_limit: int = 10240
     default_temperature: float = 0.1
+    default_enable_thinking: bool = True
     inference_concurrency: int = 1
 
     request_timeout_seconds: int = 120

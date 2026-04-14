@@ -31,6 +31,7 @@ from app.services.image_service import validate_image_count
 
 logger = get_logger(__name__)
 _CACHE_SALT_WARNING_EMITTED = False
+_CHAT_TEMPLATE_KWARGS_WARNING_EMITTED = False
 
 
 def _build_cache_salt(session_id: str, settings: Settings) -> str:
@@ -179,7 +180,7 @@ def _run_inference(
     engine_manager: EngineManager,
     settings: Settings,
 ) -> ChatCompletionResponse:
-    global _CACHE_SALT_WARNING_EMITTED
+    global _CACHE_SALT_WARNING_EMITTED, _CHAT_TEMPLATE_KWARGS_WARNING_EMITTED
     requested_model_name = engine_manager.resolve_model_name(request.model)
     try:
         engine_manager.ensure_model(requested_model_name)
@@ -221,46 +222,60 @@ def _run_inference(
         max_tokens=max_tokens,
         temperature=temperature,
     )
+    enable_thinking = (
+        request.enable_thinking
+        if request.enable_thinking is not None
+        else settings.default_enable_thinking
+    )
     chat_kwargs = {
         "messages": conversation,
         "sampling_params": sampling_params,
+        "chat_template_kwargs": {"enable_thinking": enable_thinking},
     }
     if request.session_id is not None:
         chat_kwargs["cache_salt"] = _build_cache_salt(request.session_id, settings)
 
     try:
-        results = runtime.engine.chat(**chat_kwargs)
-    except TypeError as exc:
-        if request.session_id is not None and "cache_salt" in str(exc):
-            chat_kwargs.pop("cache_salt", None)
-            if not _CACHE_SALT_WARNING_EMITTED:
-                logger.warning(
-                    "cache_salt_not_supported runtime=%s detail=%s fallback=retry_without_cache_salt",
-                    type(runtime.engine).__name__,
-                    exc,
-                )
-                _CACHE_SALT_WARNING_EMITTED = True
+        while True:
             try:
                 results = runtime.engine.chat(**chat_kwargs)
-            except Exception as retry_exc:
-                if _is_oom_error(retry_exc):
-                    raise HTTPException(
-                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        detail=(
-                            "Inference failed due to GPU memory pressure. "
-                            "Please reduce image count, image size, or max_tokens and retry."
-                        ),
-                    ) from retry_exc
+                break
+            except TypeError as exc:
+                error_text = str(exc)
+                removed_kwargs: list[str] = []
+                if "chat_template_kwargs" in error_text and "chat_template_kwargs" in chat_kwargs:
+                    chat_kwargs.pop("chat_template_kwargs", None)
+                    removed_kwargs.append("chat_template_kwargs")
+                    if not _CHAT_TEMPLATE_KWARGS_WARNING_EMITTED:
+                        logger.warning(
+                            "chat_template_kwargs_not_supported runtime=%s detail=%s fallback=retry_without_chat_template_kwargs",
+                            type(runtime.engine).__name__,
+                            exc,
+                        )
+                        _CHAT_TEMPLATE_KWARGS_WARNING_EMITTED = True
+                if (
+                    request.session_id is not None
+                    and "cache_salt" in error_text
+                    and "cache_salt" in chat_kwargs
+                ):
+                    chat_kwargs.pop("cache_salt", None)
+                    removed_kwargs.append("cache_salt")
+                    if not _CACHE_SALT_WARNING_EMITTED:
+                        logger.warning(
+                            "cache_salt_not_supported runtime=%s detail=%s fallback=retry_without_cache_salt",
+                            type(runtime.engine).__name__,
+                            exc,
+                        )
+                        _CACHE_SALT_WARNING_EMITTED = True
+                if removed_kwargs:
+                    continue
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Inference failed after retry without cache_salt: {retry_exc}",
-                ) from retry_exc
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Inference failed: {exc}",
-            ) from exc
+                    detail=f"Inference failed: {exc}",
+                ) from exc
     except Exception as exc:
+        if isinstance(exc, HTTPException):
+            raise
         if _is_oom_error(exc):
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -399,7 +414,7 @@ async def create_chat_completion(
     async with engine_manager.request_semaphore:
         queue_wait_ms = int((time.perf_counter() - queue_started_at) * 1000)
         logger.info(
-            "chat_completion_admitted request_id=%s queue_wait_ms=%s concurrency_limit=%s session_id_present=%s session_key_hash_prefix=%s message_count=%s cache_reuse_mode=%s",
+        "chat_completion_admitted request_id=%s queue_wait_ms=%s concurrency_limit=%s session_id_present=%s session_key_hash_prefix=%s message_count=%s cache_reuse_mode=%s",
             request_id,
             queue_wait_ms,
             settings.inference_concurrency,
